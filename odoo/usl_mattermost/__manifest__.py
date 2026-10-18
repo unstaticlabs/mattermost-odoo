@@ -7,10 +7,16 @@
     "website": "https://github.com/unstaticlabs/mattermost-odoo",
     "license": "LGPL-3",
     "depends": [
+        "mail",
         "project",
         "usl_pocketid",
     ],
-    "data": [],
+    "external_dependencies": {"python": ["requests"]},
+    "data": [
+        "security/ir.model.access.csv",
+        "data/ir_cron.xml",
+        "views/project_project_views.xml",
+    ],
     "application": False,
     "installable": True,
 }

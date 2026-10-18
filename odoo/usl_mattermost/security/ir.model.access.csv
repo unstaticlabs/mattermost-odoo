@@ -1,0 +1,4 @@
+id,name,model_id:id,group_id:id,perm_read,perm_write,perm_create,perm_unlink
+access_usl_mattermost_channel_link_user,usl.mattermost.channel.link user,model_usl_mattermost_channel_link,base.group_user,1,0,0,0
+access_usl_mattermost_channel_link_manager,usl.mattermost.channel.link manager,model_usl_mattermost_channel_link,project.group_project_manager,1,0,0,1
+access_usl_mattermost_card_system,usl.mattermost.card system,model_usl_mattermost_card,base.group_system,1,0,0,0

@@ -15,8 +15,22 @@ user id joins a Mattermost user to an Odoo user.
 
 ## Status
 
-Scaffold only. The plugin is the Mattermost plugin template, renamed. The Odoo
-module has no code yet.
+- `docs/api.md`: version 1, with every request and response body.
+- `odoo/usl_mattermost/`: written and tested (27 tests). It is not in the Odoo
+  image yet.
+- `mattermost-plugin/`: the Mattermost plugin template, renamed. No
+  integration code yet.
+
+## Test the Odoo module
+
+Run the tests with the `test` service of the Odoo repository, with this
+module mounted next to its add-ons. From `~/projects/odoo`:
+
+```bash
+docker compose -p usl-odoo-saas-19-3 --profile test run --rm -v ~/projects/mattermost-odoo/odoo:/mnt/mattermost-odoo:ro -e ODOO_ADDONS_PATH=/opt/odoo/addons,/opt/odoo/odoo/addons,/mnt/custom-addons,/mnt/oca-addons,/mnt/mattermost-odoo -e ODOO_INIT_DB=odoo_addon_test_usl_mattermost -e USL_EINVOICE_LIVE_ENABLED=0 -e USL_EREPORTING_LIVE_ENABLED=0 test odoo --config=/etc/odoo/odoo.conf --database=odoo_addon_test_usl_mattermost --init=usl_mattermost --without-demo=true --workers=0 --max-cron-threads=0 --test-enable --test-tags=/usl_mattermost --stop-after-init
+```
+
+The test image must exist: `docker compose -p usl-odoo-saas-19-3 --profile test build test`.
 
 ## The plugin
 

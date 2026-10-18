@@ -1,0 +1,38 @@
+<?xml version="1.0" encoding="utf-8"?>
+<odoo>
+    <record id="edit_project_usl_mattermost" model="ir.ui.view">
+        <field name="name">project.project.form.usl_mattermost</field>
+        <field name="model">project.project</field>
+        <field name="inherit_id" ref="project.edit_project"/>
+        <field name="arch" type="xml">
+            <xpath expr="//notebook" position="inside">
+                <page name="usl_mattermost" string="Mattermost channels">
+                    <p class="text-muted">
+                        These Mattermost channels show cards for this project's tasks,
+                        whatever the project's visibility. Add a channel with
+                        /odoo link in that channel.
+                    </p>
+                    <field name="usl_mattermost_link_ids"
+                           readonly="1"
+                           groups="!project.group_project_manager">
+                        <list>
+                            <field name="channel_display_name"/>
+                            <field name="team_name"/>
+                            <field name="linked_by_id"/>
+                            <field name="create_date" string="Linked on"/>
+                        </list>
+                    </field>
+                    <field name="usl_mattermost_link_ids"
+                           groups="project.group_project_manager">
+                        <list create="0" editable="bottom">
+                            <field name="channel_display_name" readonly="1"/>
+                            <field name="team_name" readonly="1"/>
+                            <field name="linked_by_id" readonly="1"/>
+                            <field name="create_date" string="Linked on" readonly="1"/>
+                        </list>
+                    </field>
+                </page>
+            </xpath>
+        </field>
+    </record>
+</odoo>
