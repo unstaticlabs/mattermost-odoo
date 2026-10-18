@@ -1,0 +1,26 @@
+{
+    "id": "com.unstaticlabs.odoo",
+    "name": "Odoo",
+    "description": "Shows Odoo task links as live cards. Built for chat.unstaticlabs.com; the Odoo side is the usl_mattermost module in the same repository.",
+    "homepage_url": "https://github.com/unstaticlabs/mattermost-odoo",
+    "support_url": "https://github.com/unstaticlabs/mattermost-odoo/issues",
+    "icon_path": "assets/starter-template-icon.svg",
+    "min_server_version": "12.0.0",
+    "server": {
+        "executables": {
+            "linux-amd64": "server/dist/plugin-linux-amd64",
+            "linux-arm64": "server/dist/plugin-linux-arm64",
+            "darwin-amd64": "server/dist/plugin-darwin-amd64",
+            "darwin-arm64": "server/dist/plugin-darwin-arm64",
+            "windows-amd64": "server/dist/plugin-windows-amd64.exe"
+        }
+    },
+    "webapp": {
+        "bundle_path": "webapp/dist/main.js"
+    },
+    "settings_schema": {
+        "header": "",
+        "footer": "",
+        "settings": []
+    }
+}
