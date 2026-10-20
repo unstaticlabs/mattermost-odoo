@@ -2,6 +2,7 @@ package main
 
 import (
 	"net/http"
+	"strings"
 	"sync"
 	"time"
 
@@ -9,30 +10,18 @@ import (
 	"github.com/mattermost/mattermost/server/public/model"
 	"github.com/mattermost/mattermost/server/public/plugin"
 	"github.com/mattermost/mattermost/server/public/pluginapi"
-	"github.com/mattermost/mattermost/server/public/pluginapi/cluster"
 	"github.com/pkg/errors"
 
-	"github.com/unstaticlabs/mattermost-odoo/mattermost-plugin/server/command"
-	"github.com/unstaticlabs/mattermost-odoo/mattermost-plugin/server/store/kvstore"
+	"github.com/unstaticlabs/mattermost-odoo/mattermost-plugin/server/odoo"
 )
 
-// Plugin implements the interface expected by the Mattermost server to communicate between the server and plugin processes.
+// Plugin shows Odoo task links as cards. See the README of this repository.
 type Plugin struct {
 	plugin.MattermostPlugin
 
-	// kvstore is the client used to read/write KV records for this plugin.
-	kvstore kvstore.KVStore
-
-	// client is the Mattermost server API client.
 	client *pluginapi.Client
-
-	// commandClient is the client used to register and execute slash commands.
-	commandClient command.Command
-
-	// router is the HTTP router for handling API requests.
 	router *mux.Router
-
-	backgroundJob *cluster.Job
+	botID  string
 
 	// configurationLock synchronizes access to the configuration.
 	configurationLock sync.RWMutex
@@ -45,45 +34,44 @@ type Plugin struct {
 // OnActivate is invoked when the plugin is activated. If an error is returned, the plugin will be deactivated.
 func (p *Plugin) OnActivate() error {
 	p.client = pluginapi.NewClient(p.API, p.Driver)
-
-	p.kvstore = kvstore.NewKVStore(p.client)
-
-	p.commandClient = command.NewCommandHandler(p.client)
-
 	p.router = p.initRouter()
 
-	job, err := cluster.Schedule(
-		p.API,
-		"BackgroundJob",
-		cluster.MakeWaitForRoundedInterval(1*time.Hour),
-		p.runJob,
-	)
+	botID, err := p.client.Bot.EnsureBot(&model.Bot{
+		Username:    "odoo",
+		DisplayName: "Odoo",
+		Description: "Posts the changes to Odoo project links in channels.",
+	})
 	if err != nil {
-		return errors.Wrap(err, "failed to schedule background job")
+		return errors.Wrap(err, "failed to ensure the Odoo bot")
 	}
+	p.botID = botID
 
-	p.backgroundJob = job
-
-	return nil
-}
-
-// OnDeactivate is invoked when the plugin is deactivated.
-func (p *Plugin) OnDeactivate() error {
-	if p.backgroundJob != nil {
-		if err := p.backgroundJob.Close(); err != nil {
-			p.API.LogError("Failed to close background job", "err", err)
-		}
+	if err := p.API.RegisterCommand(odooCommand()); err != nil {
+		return errors.Wrap(err, "failed to register the /odoo command")
 	}
 	return nil
 }
 
-// This will execute the commands that were registered in the NewCommandHandler function.
-func (p *Plugin) ExecuteCommand(c *plugin.Context, args *model.CommandArgs) (*model.CommandResponse, *model.AppError) {
-	response, err := p.commandClient.Handle(args)
-	if err != nil {
-		return nil, model.NewAppError("ExecuteCommand", "plugin.command.execute_command.app_error", nil, err.Error(), http.StatusInternalServerError)
+// odooClient returns a client for the current settings, or nil when the
+// settings are not complete.
+func (p *Plugin) odooClient() *odoo.Client {
+	config := p.getConfiguration()
+	if !config.ready() {
+		return nil
 	}
-	return response, nil
+	return &odoo.Client{
+		BaseURL: strings.TrimSpace(config.OdooURL),
+		Key:     config.PluginKey,
+		HTTP:    &http.Client{Timeout: 10 * time.Second},
+	}
 }
 
-// See https://developers.mattermost.com/extend/plugins/server/reference/
+// pocketIDSubject is the Pocket ID user id of a Mattermost user, or "" when
+// the user does not log in with Pocket ID.
+func (p *Plugin) pocketIDSubject(userID string) string {
+	user, appErr := p.API.GetUser(userID)
+	if appErr != nil || user.IsBot || user.AuthService != model.ServiceOpenid || user.AuthData == nil {
+		return ""
+	}
+	return *user.AuthData
+}

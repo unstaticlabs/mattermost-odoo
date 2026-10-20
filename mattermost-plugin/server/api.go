@@ -16,42 +16,20 @@ import (
 func (p *Plugin) initRouter() *mux.Router {
 	router := mux.NewRouter()
 
-	// The Mattermost server forwards plugin requests without the panic recovery,
-	// body size limit, or security headers it applies to its own REST API.
-	// logRequests comes first so it records the 500 written by recoverPanic.
 	router.Use(p.logRequests, p.recoverPanic, limitRequestBody, setSecurityHeaders)
 
-	// Middleware to require that the user is logged in
-	router.Use(p.MattermostAuthorizationRequired)
-
-	apiRouter := router.PathPrefix("/api/v1").Subrouter()
-
-	apiRouter.HandleFunc("/hello", p.HelloWorld).Methods(http.MethodGet)
+	// Called by Odoo, not by a Mattermost user: the signature is the
+	// authentication (see docs/api.md).
+	router.HandleFunc("/odoo/task-changed", p.handleTaskChanged).Methods(http.MethodPost)
 
 	return router
 }
 
-// ServeHTTP demonstrates a plugin that handles HTTP requests by greeting the world.
-// The root URL is currently <siteUrl>/plugins/com.unstaticlabs.odoo/api/v1/. Replace com.mattermost.plugin-starter-template with the plugin ID.
 func (p *Plugin) ServeHTTP(c *plugin.Context, w http.ResponseWriter, r *http.Request) {
 	p.router.ServeHTTP(w, r)
 }
 
 // MattermostAuthorizationRequired can trust Mattermost-User-ID because the server sets it only after authenticating the request.
-func (p *Plugin) MattermostAuthorizationRequired(next http.Handler) http.Handler {
-	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		userID := r.Header.Get("Mattermost-User-ID")
-		if userID == "" {
-			http.Error(w, "Not authorized", http.StatusUnauthorized)
-			return
-		}
-
-		next.ServeHTTP(w, r)
-	})
-}
-
-// maxRequestBodyBytes bounds how much of a request body a handler will read.
-// Raise it for endpoints that legitimately accept larger payloads.
 const maxRequestBodyBytes = 1 << 20 // 1 MiB
 
 type loggerContextKey struct{}
@@ -144,11 +122,4 @@ func setSecurityHeaders(next http.Handler) http.Handler {
 		w.Header().Set("X-Content-Type-Options", "nosniff")
 		next.ServeHTTP(w, r)
 	})
-}
-
-func (p *Plugin) HelloWorld(w http.ResponseWriter, r *http.Request) {
-	if _, err := w.Write([]byte("Hello, world!")); err != nil {
-		requestLogger(r).WithError(err).Errorf("Failed to write response")
-		http.Error(w, err.Error(), http.StatusInternalServerError)
-	}
 }

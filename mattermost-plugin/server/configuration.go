@@ -1,7 +1,9 @@
 package main
 
 import (
+	"net/url"
 	"reflect"
+	"strings"
 
 	"github.com/pkg/errors"
 )
@@ -17,7 +19,45 @@ import (
 //
 // If you add non-reference types to your configuration struct, be sure to rewrite Clone as a deep
 // copy appropriate for your types.
-type configuration struct{}
+type configuration struct {
+	// OdooURL is the Odoo base URL. Task links on its host get cards, and
+	// the plugin calls the usl_mattermost API there.
+	OdooURL string
+	// PluginKey signs the plugin's requests to Odoo (docs/api.md).
+	PluginKey string
+	// WebhookKey checks Odoo's "task changed" requests.
+	WebhookKey string
+	// PreviousWebhookKey is accepted too, during a rotation of WebhookKey.
+	PreviousWebhookKey string
+}
+
+// odooHost is the host of OdooURL, or "" when OdooURL is not a URL.
+func (c *configuration) odooHost() string {
+	link, err := url.Parse(strings.TrimSpace(c.OdooURL))
+	if err != nil || link.Scheme == "" {
+		return ""
+	}
+	return link.Hostname()
+}
+
+// ready is true when the plugin can call Odoo.
+func (c *configuration) ready() bool {
+	return c.odooHost() != "" && len(c.PluginKey) >= minKeyLength
+}
+
+// webhookKeys are the keys accepted for Odoo's requests.
+func (c *configuration) webhookKeys() []string {
+	var keys []string
+	for _, key := range []string{c.WebhookKey, c.PreviousWebhookKey} {
+		if len(key) >= minKeyLength {
+			keys = append(keys, key)
+		}
+	}
+	return keys
+}
+
+// minKeyLength matches the Odoo module's minimum key length.
+const minKeyLength = 32
 
 // Clone shallow copies the configuration. Your implementation may require a deep copy if
 // your configuration has reference types.

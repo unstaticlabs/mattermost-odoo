@@ -1,146 +1,175 @@
 package main
 
 import (
+	"bytes"
+	"encoding/json"
 	"io"
 	"net/http"
 	"net/http/httptest"
 	"strings"
 	"testing"
+	"time"
 
+	"github.com/mattermost/mattermost/server/public/model"
 	"github.com/mattermost/mattermost/server/public/plugin/plugintest"
 	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/mock"
 	"github.com/stretchr/testify/require"
+
+	"github.com/unstaticlabs/mattermost-odoo/mattermost-plugin/server/odoo"
 )
 
-type logEntry struct {
-	level  string
-	msg    string
-	fields map[string]any
+var (
+	pluginKey  = strings.Repeat("p", 40)
+	webhookKey = strings.Repeat("w", 40)
+)
+
+// fakeOdoo answers task/read with the tasks in `tasks`, as visible, and with
+// `reasons` for the others.
+func fakeOdoo(t *testing.T, tasks map[int]string, reasons map[int]string) *httptest.Server {
+	return httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		body, _ := io.ReadAll(r.Body)
+		require.Equal(t, "", odoo.Verify([]string{pluginKey}, r.Header.Get(odoo.HeaderTimestamp), r.Header.Get(odoo.HeaderSignature), r.Method, r.URL.Path, body, time.Now()))
+		var request struct {
+			Task odoo.TaskRef `json:"task"`
+		}
+		require.NoError(t, json.Unmarshal(body, &request))
+		if name, ok := tasks[request.Task.ID]; ok {
+			_ = json.NewEncoder(w).Encode(map[string]any{"v": 1, "ok": true, "visible": true, "task": map[string]any{
+				"id": request.Task.ID, "name": name, "url": "https://odoo.test/odoo/project.task/1",
+				"project": map[string]any{"id": 2, "name": "Project"}, "stage": map[string]any{"id": 3, "name": "Doing", "folded": false},
+				"state": "01_in_progress", "assignees": []any{map[string]any{"id": 8, "name": "Roger"}},
+				"date_deadline": "2026-10-20T16:00:00Z", "tags": []any{map[string]any{"id": 1, "name": "infra", "color": 4}},
+			}})
+			return
+		}
+		_ = json.NewEncoder(w).Encode(map[string]any{"v": 1, "ok": true, "visible": false, "reason": reasons[request.Task.ID]})
+	}))
 }
 
-// logRecorder captures log calls; plugintest.API can't match them because
-// the request logger emits fields in random map order.
-type logRecorder struct {
-	*plugintest.API
-	entries []logEntry
+func newPlugin(t *testing.T, odooURL string) (*Plugin, *plugintest.API) {
+	api := &plugintest.API{}
+	p := &Plugin{}
+	p.SetAPI(api)
+	p.setConfiguration(&configuration{OdooURL: odooURL, PluginKey: pluginKey, WebhookKey: webhookKey})
+	p.router = p.initRouter()
+	api.On("LogWarn", mock.Anything, mock.Anything, mock.Anything, mock.Anything, mock.Anything).Maybe()
+	api.On("LogWarn", mock.Anything, mock.Anything, mock.Anything, mock.Anything, mock.Anything, mock.Anything, mock.Anything).Maybe()
+	t.Cleanup(func() { api.AssertExpectations(t) })
+	return p, api
 }
 
-func (l *logRecorder) record(level, msg string, keyValuePairs []any) {
-	fields := map[string]any{}
-	for i := 0; i+1 < len(keyValuePairs); i += 2 {
-		fields[keyValuePairs[i].(string)] = keyValuePairs[i+1]
+func pocketIDUser(id string) *model.User {
+	subject := "subject-" + id
+	return &model.User{Id: id, Username: id, AuthService: model.ServiceOpenid, AuthData: &subject}
+}
+
+func TestMessageWillBePostedAddsCards(t *testing.T) {
+	server := fakeOdoo(t, map[int]string{1: "First task"}, map[int]string{2: "not_shared"})
+	defer server.Close()
+	p, api := newPlugin(t, server.URL)
+	host := strings.TrimPrefix(server.URL, "http://")
+	api.On("GetUser", "author").Return(pocketIDUser("author"), nil)
+
+	post := &model.Post{UserId: "author", ChannelId: "channel", Message: "see http://" + host + "/odoo/tasks/1 and http://" + host + "/odoo/tasks/2"}
+	updated, rejection := p.MessageWillBePosted(nil, post)
+	require.Equal(t, "", rejection)
+	attachments := updated.Attachments()
+	require.Len(t, attachments, 1)
+	assert.Equal(t, "First task", attachments[0].Title)
+	assert.Equal(t, cardFooter, attachments[0].Footer)
+	assert.Equal(t, []int{1}, taskIDsOf(updated))
+	assert.Empty(t, post.Attachments(), "the original post must not change")
+}
+
+func TestNoCardsWithoutPocketID(t *testing.T) {
+	server := fakeOdoo(t, map[int]string{1: "First task"}, nil)
+	defer server.Close()
+	p, api := newPlugin(t, server.URL)
+	host := strings.TrimPrefix(server.URL, "http://")
+	api.On("GetUser", "peanut").Return(&model.User{Id: "peanut", AuthService: ""}, nil)
+
+	post := &model.Post{UserId: "peanut", ChannelId: "channel", Message: "http://" + host + "/odoo/tasks/1"}
+	updated, _ := p.MessageWillBePosted(nil, post)
+	assert.Empty(t, updated.Attachments())
+}
+
+func TestApplyCardsKeepsOtherAttachments(t *testing.T) {
+	post := &model.Post{}
+	model.ParseMessageAttachment(post, []*model.MessageAttachment{{Title: "Other integration"}, {Title: "Old card", Footer: cardFooter}})
+	updated := applyCards(post, []*model.MessageAttachment{{Title: "New card", Footer: cardFooter}}, []int{4})
+	var titles []string
+	for _, attachment := range updated.Attachments() {
+		titles = append(titles, attachment.Title)
 	}
-	l.entries = append(l.entries, logEntry{level: level, msg: msg, fields: fields})
+	assert.Equal(t, []string{"Other integration", "New card"}, titles)
+
+	cleared := applyCards(updated, nil, nil)
+	require.Len(t, cleared.Attachments(), 1)
+	assert.Nil(t, cleared.GetProp(propTaskIDs))
 }
 
-func (l *logRecorder) LogDebug(msg string, keyValuePairs ...any) {
-	l.record("debug", msg, keyValuePairs)
+func TestTaskIDsSurviveJSON(t *testing.T) {
+	post := &model.Post{}
+	post.AddProp(propTaskIDs, []int{3, 5})
+	raw, err := json.Marshal(post)
+	require.NoError(t, err)
+	var decoded model.Post
+	require.NoError(t, json.Unmarshal(raw, &decoded))
+	assert.Equal(t, []int{3, 5}, taskIDsOf(&decoded))
 }
 
-func (l *logRecorder) LogError(msg string, keyValuePairs ...any) {
-	l.record("error", msg, keyValuePairs)
+func signedTaskChanged(t *testing.T, payload map[string]any, keyToUse string) *http.Request {
+	body, err := json.Marshal(payload)
+	require.NoError(t, err)
+	timestamp := time.Now().Unix()
+	path := "/plugins/" + manifest.Id + "/odoo/task-changed"
+	request := httptest.NewRequest(http.MethodPost, "/odoo/task-changed", bytes.NewReader(body))
+	request.Header.Set(odoo.HeaderTimestamp, itoa(timestamp))
+	request.Header.Set(odoo.HeaderSignature, odoo.Sign(keyToUse, timestamp, http.MethodPost, path, body))
+	return request
 }
 
-func newTestPlugin() (*Plugin, *logRecorder) {
-	api := &logRecorder{API: &plugintest.API{}}
-	plugin := &Plugin{}
-	plugin.SetAPI(api)
-	plugin.router = plugin.initRouter()
-	return plugin, api
+func itoa(value int64) string {
+	raw, _ := json.Marshal(value)
+	return string(raw)
 }
 
-func TestServeHTTP(t *testing.T) {
-	assert := assert.New(t)
-	plugin, _ := newTestPlugin()
-	w := httptest.NewRecorder()
-	r := httptest.NewRequest(http.MethodGet, "/api/v1/hello", nil)
-	r.Header.Set("Mattermost-User-ID", "test-user-id")
-
-	plugin.ServeHTTP(nil, w, r)
-
-	result := w.Result()
-	assert.NotNil(result)
-	defer func() { _ = result.Body.Close() }()
-	bodyBytes, err := io.ReadAll(result.Body)
-	assert.Nil(err)
-	bodyString := string(bodyBytes)
-
-	assert.Equal("Hello, world!", bodyString)
+func TestTaskChangedRefusesAWrongKey(t *testing.T) {
+	p, _ := newPlugin(t, "https://odoo.test")
+	recorder := httptest.NewRecorder()
+	p.handleTaskChanged(recorder, signedTaskChanged(t, map[string]any{"v": 1, "task_id": 1, "posts": []any{}}, strings.Repeat("x", 40)))
+	assert.Equal(t, http.StatusUnauthorized, recorder.Code)
 }
 
-func TestServeHTTPRecoversFromPanic(t *testing.T) {
-	t.Run("before the response is written", func(t *testing.T) {
-		plugin, api := newTestPlugin()
-		plugin.router.HandleFunc("/api/v1/panic", func(http.ResponseWriter, *http.Request) {
-			panic("boom")
-		})
-		w := httptest.NewRecorder()
-		r := httptest.NewRequest(http.MethodGet, "/api/v1/panic", nil)
-		r.Header.Set("Mattermost-User-ID", "test-user-id")
+func TestTaskChangedRefreshesTheCard(t *testing.T) {
+	server := fakeOdoo(t, nil, map[int]string{1: "archived"})
+	defer server.Close()
+	p, api := newPlugin(t, server.URL)
+	host := strings.TrimPrefix(server.URL, "http://")
+	post := &model.Post{Id: "post", UserId: "author", ChannelId: "channel", Message: "http://" + host + "/odoo/tasks/1"}
+	model.ParseMessageAttachment(post, []*model.MessageAttachment{{Title: "Old name", Footer: cardFooter}})
+	post.AddProp(propTaskIDs, []any{float64(1)})
+	api.On("GetPost", "post").Return(post, nil)
+	api.On("GetUser", "author").Return(pocketIDUser("author"), nil)
+	api.On("UpdatePost", mock.MatchedBy(func(updated *model.Post) bool {
+		attachments := updated.Attachments()
+		return len(attachments) == 1 && attachments[0].Title == "This Odoo task is no longer available"
+	})).Return(post, nil)
 
-		plugin.ServeHTTP(nil, w, r)
-
-		assert.Equal(t, http.StatusInternalServerError, w.Code)
-		require.Len(t, api.entries, 2)
-		panicLog := api.entries[0]
-		assert.Equal(t, "error", panicLog.level)
-		assert.Equal(t, "Recovered from panic in HTTP handler", panicLog.msg)
-		assert.Equal(t, "boom", panicLog.fields["panic"])
-		assert.Equal(t, "test-user-id", panicLog.fields["user_id"])
-		assert.NotEmpty(t, panicLog.fields["stack"])
-		assert.Equal(t, http.StatusInternalServerError, api.entries[1].fields["status"])
-		assert.Equal(t, "test-user-id", api.entries[1].fields["user_id"])
-	})
-
-	t.Run("after the response is written", func(t *testing.T) {
-		plugin, api := newTestPlugin()
-		plugin.router.HandleFunc("/api/v1/panic", func(w http.ResponseWriter, _ *http.Request) {
-			_, _ = w.Write([]byte("partial"))
-			panic("boom")
-		})
-		w := httptest.NewRecorder()
-		r := httptest.NewRequest(http.MethodGet, "/api/v1/panic", nil)
-		r.Header.Set("Mattermost-User-ID", "test-user-id")
-
-		plugin.ServeHTTP(nil, w, r)
-
-		assert.Equal(t, http.StatusOK, w.Code)
-		assert.Equal(t, "partial", w.Body.String())
-		require.Len(t, api.entries, 2)
-		assert.Equal(t, http.StatusOK, api.entries[1].fields["status"])
-	})
+	recorder := httptest.NewRecorder()
+	p.handleTaskChanged(recorder, signedTaskChanged(t, map[string]any{
+		"v": 1, "task_id": 1, "posts": []any{map[string]any{"post_id": "post", "channel_id": "channel"}},
+	}, webhookKey))
+	assert.Equal(t, http.StatusOK, recorder.Code, recorder.Body.String())
 }
 
-func TestServeHTTPLimitsRequestBody(t *testing.T) {
-	plugin, _ := newTestPlugin()
-	var readErr error
-	plugin.router.HandleFunc("/api/v1/echo", func(_ http.ResponseWriter, r *http.Request) {
-		_, readErr = io.ReadAll(r.Body)
-	})
-	w := httptest.NewRecorder()
-	r := httptest.NewRequest(http.MethodPost, "/api/v1/echo", strings.NewReader(strings.Repeat("a", maxRequestBodyBytes+1)))
-	r.Header.Set("Mattermost-User-ID", "test-user-id")
-
-	plugin.ServeHTTP(nil, w, r)
-
-	var maxBytesErr *http.MaxBytesError
-	assert.ErrorAs(t, readErr, &maxBytesErr)
-}
-
-func TestServeHTTPLogsRequests(t *testing.T) {
-	plugin, api := newTestPlugin()
-	w := httptest.NewRecorder()
-	r := httptest.NewRequest(http.MethodGet, "/api/v1/hello?token=secret", nil)
-
-	plugin.ServeHTTP(nil, w, r)
-
-	require.Len(t, api.entries, 1)
-	entry := api.entries[0]
-	assert.Equal(t, "debug", entry.level)
-	assert.Equal(t, "HTTP request", entry.msg)
-	assert.Equal(t, http.MethodGet, entry.fields["method"])
-	assert.Equal(t, "/api/v1/hello", entry.fields["path"])
-	assert.Equal(t, http.StatusUnauthorized, entry.fields["status"])
-	assert.Equal(t, "", entry.fields["user_id"])
-	assert.NotEmpty(t, entry.fields["duration"])
+func TestPositiveID(t *testing.T) {
+	id, ok := positiveID("21")
+	assert.True(t, ok)
+	assert.Equal(t, 21, id)
+	for _, text := range []string{"0", "-1", "21a", "Kinkverse", " 21"} {
+		_, ok := positiveID(text)
+		assert.False(t, ok, text)
+	}
 }

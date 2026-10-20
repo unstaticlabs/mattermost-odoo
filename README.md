@@ -18,8 +18,22 @@ user id joins a Mattermost user to an Odoo user.
 - `docs/api.md`: version 1, with every request and response body.
 - `odoo/usl_mattermost/`: written and tested (27 tests). It is not in the Odoo
   image yet.
-- `mattermost-plugin/`: the Mattermost plugin template, renamed. No
-  integration code yet.
+- `mattermost-plugin/`: written and tested (12 Go tests, and an end-to-end
+  test in a local Mattermost 12 with a fake Odoo that uses the module's own
+  signing code). Not installed on `chat.unstaticlabs.com` yet.
+
+Known limit: a live refresh changes the post's attachments, so Mattermost shows
+the poster's message as "(edited)". The first card, added while the message is
+posted, does not.
+
+## Plugin settings
+
+System Console > Plugins > Odoo: the Odoo URL, the plugin signing key, the
+Odoo webhook key, and an optional previous webhook key for rotations. The keys
+are the same values as Odoo's key files (`docs/api.md`).
+
+The plugin also creates the bot `@odoo`, which announces in a channel when
+someone links or unlinks a project there.
 
 ## Test the Odoo module
 

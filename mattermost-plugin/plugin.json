@@ -19,8 +19,37 @@
         "bundle_path": "webapp/dist/main.js"
     },
     "settings_schema": {
-        "header": "",
+        "header": "Shows Odoo task links as cards. The keys come from rotator; see the repository README and docs/api.md.",
         "footer": "",
-        "settings": []
+        "settings": [
+            {
+                "key": "OdooURL",
+                "display_name": "Odoo URL",
+                "type": "text",
+                "help_text": "The Odoo base URL. Task links on its host get cards, and the plugin calls the usl_mattermost API there.",
+                "default": "https://odoo.unstaticlabs.com"
+            },
+            {
+                "key": "PluginKey",
+                "display_name": "Plugin signing key",
+                "type": "text",
+                "secret": true,
+                "help_text": "Signs the plugin's requests to Odoo. The same value is in Odoo's key file usl_mattermost_plugin_key. At least 32 characters."
+            },
+            {
+                "key": "WebhookKey",
+                "display_name": "Odoo webhook key",
+                "type": "text",
+                "secret": true,
+                "help_text": "Checks Odoo's \"task changed\" requests. The same value is in Odoo's key file usl_mattermost_webhook_key. At least 32 characters."
+            },
+            {
+                "key": "PreviousWebhookKey",
+                "display_name": "Previous Odoo webhook key",
+                "type": "text",
+                "secret": true,
+                "help_text": "Also accepted during a key rotation. Leave empty otherwise."
+            }
+        ]
     }
 }
