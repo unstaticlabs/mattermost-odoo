@@ -130,7 +130,7 @@ class UslMattermostService(models.AbstractModel):
         }
 
     @api.model
-    def read_task(self, subject, channel_id, task_ref):
+    def _api_read_task(self, subject, channel_id, task_ref):
         user = self._user_for_subject(subject)
         if not user:
             return {"ok": True, "visible": False, "reason": "no_user"}
@@ -141,7 +141,7 @@ class UslMattermostService(models.AbstractModel):
         return {"ok": True, "visible": True, "task": self._task_card(task)}
 
     @api.model
-    def watch(self, subject, op, channel_id, post_id, task_id):
+    def _api_watch(self, subject, op, channel_id, post_id, task_id):
         Cards = self.env["usl.mattermost.card"].sudo()
         existing = Cards.search([("post_id", "=", post_id), ("task_id", "=", task_id)])
         if op == "remove":
@@ -181,7 +181,7 @@ class UslMattermostService(models.AbstractModel):
         return Projects, "project_ambiguous", candidates
 
     @api.model
-    def link(self, subject, op, channel, channel_member, project_query):
+    def _api_link(self, subject, op, channel, channel_member, project_query):
         user = self._user_for_subject(subject)
         if not user:
             return {"ok": False, "error": "no_user"}
@@ -224,7 +224,7 @@ class UslMattermostService(models.AbstractModel):
         }
 
     @api.model
-    def links(self, subject, channel_id):
+    def _api_links(self, subject, channel_id):
         user = self._user_for_subject(subject)
         if not user:
             return {"ok": False, "error": "no_user"}

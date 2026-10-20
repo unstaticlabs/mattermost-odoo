@@ -7,7 +7,8 @@ it stores the links between Odoo projects and Mattermost channels.
 The API is in `../../docs/api.md`. The design is the document "Mattermost and
 Odoo integration: design".
 
-This module is a scaffold. It has no models, controllers, or views yet.
+The API methods of `usl.mattermost.service` are private. Odoo RPC refuses
+them, so only the signed HTTP endpoints can call them.
 
 ## Dependencies
 

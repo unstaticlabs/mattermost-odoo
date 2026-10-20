@@ -3,6 +3,8 @@ import time
 from unittest.mock import Mock, patch
 
 from odoo import Command
+from odoo.exceptions import AccessError
+from odoo.models import get_public_method
 from odoo.tests import HttpCase, tagged
 
 from .. import signing
@@ -125,6 +127,15 @@ class TestMattermostApi(HttpCase):
         return response.json()
 
     # --- protocol -------------------------------------------------------
+
+    def test_rpc_cannot_call_the_api_methods(self):
+        # Only the signed endpoints may name a Pocket ID subject.
+        service = self.env["usl.mattermost.service"]
+        for name in ("_api_read_task", "_api_watch", "_api_link", "_api_links"):
+            with self.assertRaises(AccessError):
+                get_public_method(service, name)
+        for name in ("read_task", "watch", "link", "links"):
+            self.assertFalse(hasattr(service, name), name)
 
     def test_wrong_key_is_refused(self):
         response = self._post(

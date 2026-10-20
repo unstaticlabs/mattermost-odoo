@@ -111,7 +111,7 @@ class UslMattermostApi(http.Controller):
             action = _field(task, "action", str, required=False)
             if action:
                 task_ref["action"] = action
-            return service.read_task(
+            return service._api_read_task(
                 _field(data, "user", str),
                 _field(data, "channel_id", str),
                 task_ref,
@@ -122,7 +122,7 @@ class UslMattermostApi(http.Controller):
     @route("/usl/mattermost/task/watch", methods=["POST"], **ROUTE_OPTIONS)
     def task_watch(self, **_kwargs):
         def handler(service, data):
-            return service.watch(
+            return service._api_watch(
                 _field(data, "user", str),
                 _op(data),
                 _field(data, "channel_id", str),
@@ -144,7 +144,7 @@ class UslMattermostApi(http.Controller):
                 isinstance(project, str) and not project.strip()
             ):
                 raise BadRequest("'project' must be a project id or a name.")
-            return service.link(
+            return service._api_link(
                 _field(data, "user", str),
                 _op(data),
                 channel_info,
@@ -157,7 +157,7 @@ class UslMattermostApi(http.Controller):
     @route("/usl/mattermost/links", methods=["POST"], **ROUTE_OPTIONS)
     def links(self, **_kwargs):
         def handler(service, data):
-            return service.links(_field(data, "user", str), _field(data, "channel_id", str))
+            return service._api_links(_field(data, "user", str), _field(data, "channel_id", str))
 
         return self._authenticated(handler)
 
