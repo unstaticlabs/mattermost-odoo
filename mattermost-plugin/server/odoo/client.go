@@ -157,18 +157,24 @@ func (c *Client) post(ctx context.Context, path string, fields map[string]any, r
 	if err != nil {
 		return err
 	}
+	return c.do(ctx, http.MethodPost, path, body, result)
+}
+
+func (c *Client) do(ctx context.Context, method, path string, body []byte, result any) error {
 	now := time.Now
 	if c.Now != nil {
 		now = c.Now
 	}
 	timestamp := now().Unix()
-	request, err := http.NewRequestWithContext(ctx, http.MethodPost, strings.TrimRight(c.BaseURL, "/")+path, bytes.NewReader(body))
+	request, err := http.NewRequestWithContext(ctx, method, strings.TrimRight(c.BaseURL, "/")+path, bytes.NewReader(body))
 	if err != nil {
 		return err
 	}
-	request.Header.Set("Content-Type", "application/json")
+	if body != nil {
+		request.Header.Set("Content-Type", "application/json")
+	}
 	request.Header.Set(HeaderTimestamp, fmt.Sprint(timestamp))
-	request.Header.Set(HeaderSignature, Sign(c.Key, timestamp, http.MethodPost, path, body))
+	request.Header.Set(HeaderSignature, Sign(c.Key, timestamp, method, path, body))
 
 	httpClient := c.HTTP
 	if httpClient == nil {
@@ -189,4 +195,19 @@ func (c *Client) post(ctx context.Context, path string, fields map[string]any, r
 		return protocolError
 	}
 	return json.Unmarshal(answer, result)
+}
+
+// HealthResult is the answer of health.
+type HealthResult struct {
+	OK                bool    `json:"ok"`
+	Module            string  `json:"module"`
+	Version           *string `json:"version"`
+	WebhookConfigured bool    `json:"webhook_configured"`
+}
+
+// Health calls health, a signed GET with no body.
+func (c *Client) Health(ctx context.Context) (*HealthResult, error) {
+	var result HealthResult
+	err := c.do(ctx, http.MethodGet, "/usl/mattermost/health", nil, &result)
+	return &result, err
 }

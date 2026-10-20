@@ -22,6 +22,9 @@ func (p *Plugin) initRouter() *mux.Router {
 	// authentication (see docs/api.md).
 	router.HandleFunc("/odoo/task-changed", p.handleTaskChanged).Methods(http.MethodPost)
 
+	// For the plugin settings page. Mattermost sets Mattermost-User-ID.
+	router.HandleFunc("/api/v1/status", p.handleStatus).Methods(http.MethodGet)
+
 	return router
 }
 

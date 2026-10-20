@@ -23,6 +23,12 @@
         "footer": "",
         "settings": [
             {
+                "key": "Status",
+                "display_name": "Status",
+                "type": "custom",
+                "help_text": "Where each setting comes from, and whether Odoo answers. A value from the environment wins over the field."
+            },
+            {
                 "key": "OdooURL",
                 "display_name": "Odoo URL",
                 "type": "text",
