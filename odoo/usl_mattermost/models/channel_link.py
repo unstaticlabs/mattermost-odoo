@@ -53,4 +53,9 @@ class UslMattermostChannelLink(models.Model):
 
     def unlink(self):
         self._usl_post_note(self.env._("Mattermost channel unlinked:"), self.env.user)
-        return super().unlink()
+        projects = self.project_id
+        result = super().unlink()
+        # The cards in the channel may now be hidden, so the plugin reads
+        # them again.
+        self.env["usl.mattermost.card"]._usl_mark_projects_changed(projects)
+        return result

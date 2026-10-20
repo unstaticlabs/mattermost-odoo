@@ -2,6 +2,7 @@ import json
 import logging
 import time
 from collections import defaultdict
+from urllib.parse import urlsplit
 
 import requests
 
@@ -51,11 +52,40 @@ class UslMattermostCard(models.Model):
             self.env.ref("usl_mattermost.ir_cron_push_cards").sudo()._trigger()
 
     @api.model
-    def _cron_push(self):
+    def _usl_mark_projects_changed(self, projects):
+        """Mark the cards of every task of `projects`."""
+        if not projects:
+            return
+        tasks = self.env["project.task"].sudo().with_context(active_test=False).search(
+            [("project_id", "in", projects.ids)],
+        )
+        self._usl_mark_changed(tasks.ids)
+
+    @api.model
+    def _usl_mark_all_changed(self):
+        """Mark every card, after a change that can hide any task."""
+        cards = self.sudo().search([("needs_push", "=", False)])
+        if cards:
+            cards.write({"needs_push": True})
+            self.env.ref("usl_mattermost.ir_cron_push_cards").sudo()._trigger()
+
+    @api.model
+    def _usl_mattermost_url(self):
+        """The Mattermost base URL, or "" when it is not an https URL."""
         url = (
             self.env["ir.config_parameter"].sudo().get_str(MATTERMOST_URL_PARAMETER)
             or ""
-        ).rstrip("/")
+        ).strip().rstrip("/")
+        parts = urlsplit(url)
+        if parts.scheme != "https" or not parts.hostname or parts.query or parts.fragment or parts.username:
+            if url:
+                _logger.warning("%s is not an https URL; no card is refreshed.", MATTERMOST_URL_PARAMETER)
+            return ""
+        return url
+
+    @api.model
+    def _cron_push(self):
+        url = self._usl_mattermost_url()
         keys = signing.load_keys(signing.WEBHOOK_KEY_ENV, signing.WEBHOOK_KEY_DEFAULT)
         if not url or not keys:
             return
@@ -97,6 +127,8 @@ class UslMattermostCard(models.Model):
                 data=body,
                 headers=headers,
                 timeout=10,
+                # A redirect would send the signed body to another host.
+                allow_redirects=False,
             )
             if response.status_code != 200:
                 error = f"HTTP {response.status_code}"

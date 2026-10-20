@@ -5,12 +5,17 @@ Odoo user, and checks rights as that user. The service itself runs as
 superuser only to look things up and to write its own records.
 """
 
+import re
+
 from odoo import api, models
 
 # Project visibilities that every internal user may see, so any channel
 # may get their task cards without a link.
 OPEN_VISIBILITIES = ("employees", "portal")
 CANDIDATES_LIMIT = 10
+# An /odoo/action-<action> link names an action by database id or by XML id.
+ACTION_ID = re.compile(r"[0-9]+")
+ACTION_XMLID = re.compile(r"[a-z0-9_]+\.[a-z0-9_]+")
 
 
 def _utc(value):
@@ -64,8 +69,10 @@ class UslMattermostService(models.AbstractModel):
     def _task_action(self, action):
         """The window action named by an /odoo/action-<action> link, if it opens tasks."""
         Actions = self.env["ir.actions.act_window"].sudo()
-        if action.isdigit():
+        if ACTION_ID.fullmatch(action):
             act = Actions.browse(int(action)).exists()
+        elif not ACTION_XMLID.fullmatch(action):
+            return Actions
         else:
             act = self.env.ref(action, raise_if_not_found=False)
             if not act or act._name != "ir.actions.act_window":
@@ -77,10 +84,12 @@ class UslMattermostService(models.AbstractModel):
         """None when the channel may see the task, else the reason why not."""
         if not task:
             return "not_found"
-        if not task.active:
-            return "archived"
+        # Check the access first: a user who may not read the task must not
+        # learn that it is archived.
         if not task.with_user(user).has_access("read"):
             return "no_access"
+        if not task.active:
+            return "archived"
         project = task.project_id
         if not project:
             return "not_shared"
@@ -164,7 +173,7 @@ class UslMattermostService(models.AbstractModel):
     def _find_project(self, user, query):
         """(project, error, candidates) for a project id or name, as `user` may read."""
         Projects = self.env["project.project"].with_user(user)
-        if isinstance(query, int) or (isinstance(query, str) and query.strip().isdigit()):
+        if isinstance(query, int) or (isinstance(query, str) and ACTION_ID.fullmatch(query.strip())):
             project = Projects.browse(int(query)).exists()
             if project and project.has_access("read"):
                 return project, None, []

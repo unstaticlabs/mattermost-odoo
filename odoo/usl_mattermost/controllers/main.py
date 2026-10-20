@@ -6,11 +6,14 @@ usl.mattermost.service model.
 """
 
 import json
+import logging
 
 from odoo import http
 from odoo.http import request, route
 
 from .. import signing
+
+_logger = logging.getLogger(__name__)
 
 API_VERSIONS = {1}
 MESSAGES = {
@@ -19,10 +22,14 @@ MESSAGES = {
     "too_large": "The body is above 64 KiB.",
     "not_configured": "Odoo has no key for the plugin.",
     "unsupported_version": "This API version is not supported.",
+    "replayed": "This signed request was already received.",
+    "internal_error": "Odoo could not answer.",
 }
 STATUS = {
     "bad_signature": 401,
     "stale_timestamp": 401,
+    "replayed": 401,
+    "internal_error": 500,
     "too_large": 413,
     "bad_request": 400,
     "unsupported_version": 400,
@@ -71,6 +78,11 @@ class UslMattermostApi(http.Controller):
 
     def _authenticated(self, handler, *, with_body=True):
         httprequest = request.httprequest
+        # Check the declared size before Odoo reads the body.
+        if (httprequest.content_length or 0) > signing.MAX_BODY_BYTES:
+            return self._error("too_large")
+        if httprequest.query_string:
+            return self._error("bad_request", "The signature does not cover a query string.")
         body = httprequest.get_data(cache=True)
         if len(body) > signing.MAX_BODY_BYTES:
             return self._error("too_large")
@@ -89,6 +101,11 @@ class UslMattermostApi(http.Controller):
             return self._error(error)
         data = {}
         if with_body:
+            # The bodies hold a random request id, so a second use of a
+            # signature is a copy. The body-less GET /health only reads.
+            signature = httprequest.headers.get("X-USL-Signature")
+            if not request.env["usl.mattermost.nonce"].sudo()._usl_first_use(signature):
+                return self._error("replayed")
             try:
                 data = json.loads(body or b"null")
             except ValueError:
@@ -102,6 +119,11 @@ class UslMattermostApi(http.Controller):
             return self._answer(handler(service, data))
         except BadRequest as exc:
             return self._error("bad_request", str(exc))
+        except Exception:
+            # A traceback must not reach the caller.
+            _logger.exception("The Mattermost API failed on %s", httprequest.path)
+            request.env.cr.rollback()
+            return self._error("internal_error")
 
     @route("/usl/mattermost/task/read", methods=["POST"], **ROUTE_OPTIONS)
     def task_read(self, **_kwargs):

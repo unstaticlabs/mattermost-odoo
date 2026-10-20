@@ -7,16 +7,22 @@ both parts.
 ## Rules for every request
 
 - JSON over HTTPS.
-- Every body carries `"v": 1`. Each side accepts the current version and the
-  one before it, so the plugin and the module can deploy in either order.
+- Every body carries `"v": 1`. Version 1 is the only version, so each side
+  accepts only `1`. A later version must keep the one before it for one
+  release, so the plugin and the module can deploy in either order.
+- Every plugin body also carries `"rid"`: a random request id (24 hex
+  characters). It makes every signature unique.
 - Every request carries two headers:
   - `X-USL-Timestamp`: the time in Unix seconds.
   - `X-USL-Signature`: `v1=` and the lowercase hex HMAC-SHA256, with the key
     of its direction (below), over these bytes:
-    `<timestamp>\n<METHOD>\n<path>\n<body>`. The path has no query string.
-    A `GET` has an empty body.
-- The receiver refuses a timestamp more than 5 minutes old or in the future,
-  and a body above 64 KiB.
+    `<timestamp>\n<METHOD>\n<path>\n<body>`. A `GET` has an empty body.
+- The receiver refuses:
+  - a timestamp more than 5 minutes old or in the future;
+  - a body above 64 KiB, before it reads the body when the size is declared;
+  - a query string, because the signature does not cover it;
+  - a signature that it accepted before (`replayed`). Odoo checks this for
+    every `POST`, and the plugin for `task-changed`.
 
 | Direction | Key | Holders |
 |---|---|---|
@@ -30,9 +36,20 @@ current and the previous key.
 
 A request that acts for a person names them by their Pocket ID user id: the
 Mattermost user's `authdata`, for a user whose `authservice` is `openid`. The
-module finds the active Odoo user whose `res.users.oauth_uid` is that id, with
-the Pocket ID provider, and runs the request as that user (`with_user`). It
-never matches by email: Odoo logins are not always emails.
+module finds the one active Pocket ID identity (`usl.oidc.identity`, module
+`usl_pocketid`) with that subject on an enabled Pocket ID provider. Its user
+must be active and internal. The module runs the request as that user
+(`with_user`). It never matches by email: Odoo logins are not always emails.
+
+The plugin sends a user only for a change that the user makes in their own
+session. A post that a plugin or an admin makes or edits for another user
+never reads Odoo with that user's rights: the old cards stay.
+
+Trust: the plugin key acts for any Pocket ID user, and a Mattermost system
+admin can change the `authdata` of any user. So a Mattermost system admin can
+read Odoo as any user. Give the Mattermost system admin role only to people
+who are Odoo administrators too. Every Mattermost server plugin runs with the
+same rights as this plugin, so install only plugins that you trust.
 
 A Mattermost user who is not `openid`, or who has no matching Odoo user, gets
 no card and no action.
@@ -105,10 +122,12 @@ A protocol error is an HTTP 4xx or 5xx status with this body:
 |---|---|---|
 | `bad_signature` | 401 | No signature, or it does not match any accepted key |
 | `stale_timestamp` | 401 | The timestamp is missing, or more than 5 minutes away |
+| `replayed` | 401 | The receiver accepted this signature before |
 | `too_large` | 413 | The body is above 64 KiB |
-| `bad_request` | 400 | The body is not valid JSON, or a field is missing or has the wrong type |
+| `bad_request` | 400 | The body is not valid JSON, a field is missing or has the wrong type, or the URL has a query string |
 | `unsupported_version` | 400 | `v` is not a version this side accepts |
 | `not_configured` | 503 | The receiver has no key for this direction |
+| `internal_error` | 500 | The receiver failed; its log has the details |
 
 A refusal that concerns the user, the task, or the project is a normal answer:
 status 200 and `"ok": true` with `"visible": false`, or `"ok": false` with an
@@ -159,7 +178,7 @@ Answer when it may not:
 |---|---|
 | `no_user` | No active internal Odoo user has this Pocket ID user id |
 | `not_found` | The task does not exist, or the action does not open tasks |
-| `archived` | The task is archived |
+| `archived` | The task is archived, and the user may read it |
 | `no_access` | The user may not read the task |
 | `not_shared` | The user may read it, but the channel may not see it: no link, and the project is not visible to all internal users |
 
@@ -261,6 +280,13 @@ run.
 | Plugin signing key | File named by `USL_MATTERMOST_PLUGIN_KEY_FILE` (default `/run/secrets/usl_mattermost_plugin_key`) | 64 random characters |
 | Odoo webhook key | File named by `USL_MATTERMOST_WEBHOOK_KEY_FILE` (default `/run/secrets/usl_mattermost_webhook_key`) | 64 random characters |
 | Mattermost URL | System parameter `usl_mattermost.mattermost_url` | `https://chat.unstaticlabs.com` |
+
+The Mattermost URL must be an `https` URL with no user, query, or fragment.
+Odoo does not follow a redirect when it sends a task change.
+
+Only project managers can read the channel links in Odoo, because a link
+names a Mattermost channel and team. When a link goes away, or a project or
+user loses access, Odoo sends the affected tasks again, so their cards hide.
 
 A key file holds the current key on its first line, and optionally the
 previous key on its second line, for a rotation. A key shorter than 32

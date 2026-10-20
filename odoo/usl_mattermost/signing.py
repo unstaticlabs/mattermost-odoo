@@ -57,8 +57,12 @@ def verify(keys, timestamp_header, signature_header, method, path, body, now=Non
         return "stale_timestamp"
     if not signature_header or not signature_header.startswith(SCHEME):
         return "bad_signature"
+    try:
+        given = signature_header.encode("ascii")
+    except UnicodeEncodeError:
+        return "bad_signature"
     for key in keys:
-        expected = signature(key, timestamp, method, path, body)
-        if hmac.compare_digest(expected, signature_header):
+        expected = signature(key, timestamp, method, path, body).encode("ascii")
+        if hmac.compare_digest(expected, given):
             return None
     return "bad_signature"

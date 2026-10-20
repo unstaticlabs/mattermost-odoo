@@ -1,5 +1,6 @@
 import json
 import time
+import uuid
 from unittest.mock import Mock, patch
 
 from odoo import Command
@@ -93,7 +94,9 @@ class TestMattermostApi(HttpCase):
 
     # --- helpers --------------------------------------------------------
 
-    def _post(self, path, payload, *, key=PLUGIN_KEY, timestamp=None, raw=None):
+    def _post(self, path, payload, *, key=PLUGIN_KEY, timestamp=None, raw=None, query=""):
+        if raw is None and isinstance(payload, dict) and "rid" not in payload:
+            payload = {**payload, "rid": uuid.uuid4().hex}
         body = raw if raw is not None else json.dumps(payload).encode()
         timestamp = int(time.time()) if timestamp is None else timestamp
         headers = {
@@ -101,7 +104,7 @@ class TestMattermostApi(HttpCase):
             "X-USL-Timestamp": str(timestamp),
             "X-USL-Signature": signing.signature(key, timestamp, "POST", path, body),
         }
-        return self.url_open(path, data=body, headers=headers)
+        return self.url_open(path + query, data=body, headers=headers)
 
     def _read(self, who, task, channel=CHANNEL):
         response = self._post(
@@ -136,6 +139,42 @@ class TestMattermostApi(HttpCase):
                 get_public_method(service, name)
         for name in ("read_task", "watch", "link", "links"):
             self.assertFalse(hasattr(service, name), name)
+
+    def test_a_copied_request_is_refused(self):
+        payload = {"v": 1, "user": "subject-member", "channel_id": CHANNEL, "rid": "same"}
+        timestamp = int(time.time())
+        first = self._post("/usl/mattermost/links", payload, timestamp=timestamp)
+        self.assertEqual(first.status_code, 200, first.text)
+        second = self._post("/usl/mattermost/links", payload, timestamp=timestamp)
+        self.assertEqual(second.status_code, 401)
+        self.assertEqual(second.json()["error"], "replayed")
+
+    def test_a_query_string_is_refused(self):
+        response = self._post(
+            "/usl/mattermost/links",
+            {"v": 1, "user": "subject-member", "channel_id": CHANNEL},
+            query="?debug=1",
+        )
+        self.assertEqual(response.status_code, 400)
+
+    def test_a_non_ascii_signature_is_refused(self):
+        body = b'{"v": 1}'
+        response = self.url_open(
+            "/usl/mattermost/links",
+            data=body,
+            headers={"X-USL-Timestamp": str(int(time.time())), "X-USL-Signature": "v1=\u00e9"},
+        )
+        self.assertEqual(response.status_code, 401)
+
+    def test_a_bad_action_is_not_a_server_error(self):
+        for action in ("foo", "²", "a.b.c", "1²"):
+            with self.subTest(action=action):
+                response = self._post(
+                    "/usl/mattermost/task/read",
+                    {"v": 1, "user": "subject-member", "channel_id": CHANNEL, "task": {"action": action, "id": self.open_task.id}},
+                )
+                self.assertEqual(response.status_code, 200, response.text)
+                self.assertEqual(response.json()["reason"], "not_found")
 
     def test_wrong_key_is_refused(self):
         response = self._post(
@@ -218,6 +257,35 @@ class TestMattermostApi(HttpCase):
 
     def test_task_the_user_cannot_read(self):
         self.assertEqual(self._read("outsider", self.private_task)["reason"], "no_access")
+
+    def test_archived_task_of_another_user_looks_unreadable(self):
+        self.private_task.active = False
+        self.assertEqual(self._read("outsider", self.private_task)["reason"], "no_access")
+
+    def test_links_are_for_project_managers(self):
+        self._link("manager", "add", "Private project")
+        Links = self.env["usl.mattermost.channel.link"]
+        with self.assertRaises(AccessError):
+            Links.with_user(self.member).search_read([], ["channel_name", "project_id"])
+        self.assertEqual(len(Links.with_user(self.manager).search([])), 1)
+
+    def test_lost_access_refreshes_the_cards(self):
+        self._link("manager", "add", "Private project")
+        self._watch("member", self.private_task)
+        card = self.env["usl.mattermost.card"].search([("task_id", "=", self.private_task.id)])
+        self.assertTrue(card)
+        self.assertFalse(card.needs_push)
+        self._link("manager", "remove", "Private project")
+        self.assertTrue(card.needs_push)
+        card.needs_push = False
+        self.private_project.privacy_visibility = "employees"
+        self.assertTrue(card.needs_push)
+        card.needs_push = False
+        self.private_project.message_unsubscribe(partner_ids=self.member.partner_id.ids)
+        self.assertTrue(card.needs_push)
+        card.needs_push = False
+        self.outsider.active = False
+        self.assertTrue(card.needs_push)
 
     def test_archived_and_missing_tasks(self):
         self.open_task.active = False
@@ -325,6 +393,7 @@ class TestMattermostApi(HttpCase):
         with patch.object(card_module.requests, "post", return_value=sent) as post:
             self.env["usl.mattermost.card"]._cron_push()
         post.assert_called_once()
+        self.assertIs(post.call_args.kwargs["allow_redirects"], False)
         url = post.call_args.args[0]
         self.assertEqual(url, "https://chat.example.test" + card_module.TASK_CHANGED_PATH)
         body = post.call_args.kwargs["data"]
@@ -362,3 +431,14 @@ class TestMattermostApi(HttpCase):
         self.assertTrue(card.needs_push)
         self.assertEqual(card.push_attempts, 1)
         self.assertEqual(card.last_push_error, "HTTP 502")
+
+    def test_only_an_https_mattermost_url_is_used(self):
+        self._watch("member", self.open_task)
+        self.open_task.name = "Renamed for the URL test"
+        Cards = self.env["usl.mattermost.card"]
+        for url in ("http://chat.example.test", "https://chat.example.test?x=1", "https://user@chat.example.test", "file:///etc/passwd"):
+            with self.subTest(url=url):
+                self.env["ir.config_parameter"].sudo().set_str(card_module.MATTERMOST_URL_PARAMETER, url)
+                with patch.object(card_module.requests, "post") as post:
+                    Cards._cron_push()
+                post.assert_not_called()
