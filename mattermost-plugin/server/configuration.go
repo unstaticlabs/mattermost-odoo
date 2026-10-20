@@ -2,6 +2,7 @@ package main
 
 import (
 	"net/url"
+	"os"
 	"reflect"
 	"strings"
 
@@ -31,9 +32,29 @@ type configuration struct {
 	PreviousWebhookKey string
 }
 
-// odooHost is the host of OdooURL, or "" when OdooURL is not a URL.
+// Environment variables win over the settings. The Mattermost server passes
+// its environment to the plugin process, so the gitops compose can set the
+// keys from Komodo variables that rotator writes.
+const (
+	envOdooURL            = "USL_ODOO_URL"
+	envPluginKey          = "USL_ODOO_PLUGIN_KEY"
+	envWebhookKey         = "USL_ODOO_WEBHOOK_KEY"
+	envPreviousWebhookKey = "USL_ODOO_PREVIOUS_WEBHOOK_KEY"
+)
+
+func fromEnv(name, setting string) string {
+	if value := strings.TrimSpace(os.Getenv(name)); value != "" {
+		return value
+	}
+	return strings.TrimSpace(setting)
+}
+
+func (c *configuration) odooURL() string   { return fromEnv(envOdooURL, c.OdooURL) }
+func (c *configuration) pluginKey() string { return fromEnv(envPluginKey, c.PluginKey) }
+
+// odooHost is the host of the Odoo URL, or "" when it is not a URL.
 func (c *configuration) odooHost() string {
-	link, err := url.Parse(strings.TrimSpace(c.OdooURL))
+	link, err := url.Parse(c.odooURL())
 	if err != nil || link.Scheme == "" {
 		return ""
 	}
@@ -42,13 +63,13 @@ func (c *configuration) odooHost() string {
 
 // ready is true when the plugin can call Odoo.
 func (c *configuration) ready() bool {
-	return c.odooHost() != "" && len(c.PluginKey) >= minKeyLength
+	return c.odooHost() != "" && len(c.pluginKey()) >= minKeyLength
 }
 
 // webhookKeys are the keys accepted for Odoo's requests.
 func (c *configuration) webhookKeys() []string {
 	var keys []string
-	for _, key := range []string{c.WebhookKey, c.PreviousWebhookKey} {
+	for _, key := range []string{fromEnv(envWebhookKey, c.WebhookKey), fromEnv(envPreviousWebhookKey, c.PreviousWebhookKey)} {
 		if len(key) >= minKeyLength {
 			keys = append(keys, key)
 		}

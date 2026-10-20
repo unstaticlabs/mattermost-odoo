@@ -2,7 +2,6 @@ package main
 
 import (
 	"net/http"
-	"strings"
 	"sync"
 	"time"
 
@@ -60,8 +59,8 @@ func (p *Plugin) odooClient() *odoo.Client {
 		return nil
 	}
 	return &odoo.Client{
-		BaseURL: strings.TrimSpace(config.OdooURL),
-		Key:     config.PluginKey,
+		BaseURL: config.odooURL(),
+		Key:     config.pluginKey(),
 		HTTP:    &http.Client{Timeout: 10 * time.Second},
 	}
 }

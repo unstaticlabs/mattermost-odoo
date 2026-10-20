@@ -28,9 +28,19 @@ posted, does not.
 
 ## Plugin settings
 
-System Console > Plugins > Odoo: the Odoo URL, the plugin signing key, the
-Odoo webhook key, and an optional previous webhook key for rotations. The keys
-are the same values as Odoo's key files (`docs/api.md`).
+The plugin reads its settings from environment variables of the Mattermost
+server first, then from System Console > Plugins > Odoo:
+
+| Environment variable | Setting | Value |
+|---|---|---|
+| `USL_ODOO_URL` | Odoo URL | `https://odoo.unstaticlabs.com` |
+| `USL_ODOO_PLUGIN_KEY` | Plugin signing key | the same value as Odoo's `usl_mattermost_plugin_key` file |
+| `USL_ODOO_WEBHOOK_KEY` | Odoo webhook key | the same value as Odoo's `usl_mattermost_webhook_key` file |
+| `USL_ODOO_PREVIOUS_WEBHOOK_KEY` | Previous Odoo webhook key | only during a rotation |
+
+On `chat.unstaticlabs.com`, the gitops compose sets the variables from
+Komodo variables that rotator writes, so no key is typed in the System
+Console.
 
 The plugin also creates the bot `@odoo`, which announces in a channel when
 someone links or unlinks a project there.

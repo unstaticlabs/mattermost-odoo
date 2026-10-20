@@ -173,3 +173,13 @@ func TestPositiveID(t *testing.T) {
 		assert.False(t, ok, text)
 	}
 }
+
+func TestEnvironmentWinsOverSettings(t *testing.T) {
+	t.Setenv(envPluginKey, strings.Repeat("e", 40))
+	t.Setenv(envWebhookKey, strings.Repeat("f", 40))
+	t.Setenv(envOdooURL, "https://odoo.env.test")
+	config := &configuration{OdooURL: "https://odoo.setting.test", PluginKey: "short", WebhookKey: webhookKey}
+	assert.True(t, config.ready())
+	assert.Equal(t, "odoo.env.test", config.odooHost())
+	assert.Equal(t, []string{strings.Repeat("f", 40)}, config.webhookKeys())
+}
