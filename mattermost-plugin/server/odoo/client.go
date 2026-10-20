@@ -3,6 +3,8 @@ package odoo
 import (
 	"bytes"
 	"context"
+	"crypto/rand"
+	"encoding/hex"
 	"encoding/json"
 	"fmt"
 	"io"
@@ -153,6 +155,13 @@ func (c *Client) Links(ctx context.Context, subject, channelID string) (*LinksRe
 
 func (c *Client) post(ctx context.Context, path string, fields map[string]any, result any) error {
 	fields["v"] = APIVersion
+	// A random request id makes every signature unique, so Odoo can refuse
+	// a copied request without refusing two equal ones.
+	rid := make([]byte, 12)
+	if _, err := rand.Read(rid); err != nil {
+		return err
+	}
+	fields["rid"] = hex.EncodeToString(rid)
 	body, err := json.Marshal(fields)
 	if err != nil {
 		return err

@@ -13,7 +13,8 @@ import (
 
 const (
 	signatureScheme = "v1="
-	maxSkew         = 5 * time.Minute
+	// MaxSkew is how far a request timestamp may be from now.
+	MaxSkew = 5 * time.Minute
 
 	// HeaderTimestamp and HeaderSignature carry the request signature.
 	HeaderTimestamp = "X-USL-Timestamp"
@@ -41,7 +42,7 @@ func Verify(keys []string, timestampHeader, signatureHeader, method, path string
 		return "stale_timestamp"
 	}
 	skew := now.Sub(time.Unix(timestamp, 0))
-	if skew > maxSkew || skew < -maxSkew {
+	if skew > MaxSkew || skew < -MaxSkew {
 		return "stale_timestamp"
 	}
 	if !strings.HasPrefix(signatureHeader, signatureScheme) {

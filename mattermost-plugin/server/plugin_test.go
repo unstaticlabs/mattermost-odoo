@@ -11,6 +11,7 @@ import (
 	"time"
 
 	"github.com/mattermost/mattermost/server/public/model"
+	"github.com/mattermost/mattermost/server/public/plugin"
 	"github.com/mattermost/mattermost/server/public/plugin/plugintest"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/mock"
@@ -70,9 +71,10 @@ func TestMessageWillBePostedAddsCards(t *testing.T) {
 	p, api := newPlugin(t, server.URL)
 	host := strings.TrimPrefix(server.URL, "http://")
 	api.On("GetUser", "author").Return(pocketIDUser("author"), nil)
+	api.On("GetSession", "session-author").Return(&model.Session{Id: "session-author", UserId: "author"}, nil)
 
 	post := &model.Post{UserId: "author", ChannelId: "channel", Message: "see http://" + host + "/odoo/tasks/1 and http://" + host + "/odoo/tasks/2"}
-	updated, rejection := p.MessageWillBePosted(nil, post)
+	updated, rejection := p.MessageWillBePosted(&plugin.Context{SessionId: "session-author"}, post)
 	require.Equal(t, "", rejection)
 	attachments := updated.Attachments()
 	require.Len(t, attachments, 1)
@@ -88,10 +90,85 @@ func TestNoCardsWithoutPocketID(t *testing.T) {
 	p, api := newPlugin(t, server.URL)
 	host := strings.TrimPrefix(server.URL, "http://")
 	api.On("GetUser", "peanut").Return(&model.User{Id: "peanut", AuthService: ""}, nil)
+	api.On("GetSession", "session-peanut").Return(&model.Session{Id: "session-peanut", UserId: "peanut"}, nil)
 
 	post := &model.Post{UserId: "peanut", ChannelId: "channel", Message: "http://" + host + "/odoo/tasks/1"}
-	updated, _ := p.MessageWillBePosted(nil, post)
+	updated, _ := p.MessageWillBePosted(&plugin.Context{SessionId: "session-peanut"}, post)
 	assert.Empty(t, updated.Attachments())
+}
+
+// forgedCard is a post with card values that a client sent.
+func forgedCard(post *model.Post) *model.Post {
+	model.ParseMessageAttachment(post, []*model.MessageAttachment{{Title: "Other integration"}, {Title: "Forged", Footer: cardFooter}})
+	post.AddProp(propTaskIDs, []any{float64(9)})
+	return post
+}
+
+func TestPostWithoutTheAuthorSessionGetsNoCards(t *testing.T) {
+	server := fakeOdoo(t, map[int]string{1: "First task"}, nil)
+	defer server.Close()
+	p, api := newPlugin(t, server.URL)
+	host := strings.TrimPrefix(server.URL, "http://")
+	api.On("GetSession", "session-admin").Return(&model.Session{Id: "session-admin", UserId: "admin"}, nil)
+
+	for name, c := range map[string]*plugin.Context{
+		"a plugin, no session":    nil,
+		"another user's session":  {SessionId: "session-admin"},
+		"an empty plugin context": {},
+	} {
+		post := forgedCard(&model.Post{UserId: "author", ChannelId: "channel", Message: "http://" + host + "/odoo/tasks/1"})
+		updated, _ := p.MessageWillBePosted(c, post)
+		require.Len(t, updated.Attachments(), 1, name)
+		assert.Equal(t, "Other integration", updated.Attachments()[0].Title, name)
+		assert.Nil(t, updated.GetProp(propTaskIDs), name)
+	}
+}
+
+func TestEditByAnotherUserKeepsTheOldCards(t *testing.T) {
+	server := fakeOdoo(t, map[int]string{1: "First task", 2: "Second task"}, nil)
+	defer server.Close()
+	p, api := newPlugin(t, server.URL)
+	host := strings.TrimPrefix(server.URL, "http://")
+	api.On("GetSession", "session-admin").Return(&model.Session{Id: "session-admin", UserId: "admin"}, nil)
+
+	oldPost := &model.Post{UserId: "author", ChannelId: "channel", Message: "http://" + host + "/odoo/tasks/1"}
+	model.ParseMessageAttachment(oldPost, []*model.MessageAttachment{{Title: "First task", Footer: cardFooter}})
+	oldPost.AddProp(propTaskIDs, []any{float64(1)})
+	newPost := forgedCard(&model.Post{UserId: "author", ChannelId: "channel", Message: "http://" + host + "/odoo/tasks/2"})
+
+	updated, _ := p.MessageWillBeUpdated(&plugin.Context{SessionId: "session-admin"}, newPost, oldPost)
+	var titles []string
+	for _, attachment := range updated.Attachments() {
+		titles = append(titles, attachment.Title)
+	}
+	assert.Equal(t, []string{"Other integration", "First task"}, titles)
+	assert.Equal(t, []int{1}, taskIDsOf(updated))
+}
+
+func TestEditByTheAuthorRecomputesTheCards(t *testing.T) {
+	server := fakeOdoo(t, map[int]string{1: "First task", 2: "Second task"}, nil)
+	defer server.Close()
+	p, api := newPlugin(t, server.URL)
+	host := strings.TrimPrefix(server.URL, "http://")
+	api.On("GetUser", "author").Return(pocketIDUser("author"), nil)
+	api.On("GetSession", "session-author").Return(&model.Session{Id: "session-author", UserId: "author"}, nil)
+
+	oldPost := &model.Post{UserId: "author", ChannelId: "channel", Message: "http://" + host + "/odoo/tasks/1"}
+	newPost := forgedCard(&model.Post{UserId: "author", ChannelId: "channel", Message: "http://" + host + "/odoo/tasks/2"})
+	updated, _ := p.MessageWillBeUpdated(&plugin.Context{SessionId: "session-author"}, newPost, oldPost)
+	var titles []string
+	for _, attachment := range updated.Attachments() {
+		titles = append(titles, attachment.Title)
+	}
+	assert.Equal(t, []string{"Other integration", "Second task"}, titles)
+	assert.Equal(t, []int{2}, taskIDsOf(updated))
+}
+
+func TestUpdateWithoutASessionStaysAsItIs(t *testing.T) {
+	p, _ := newPlugin(t, "https://odoo.test")
+	newPost := forgedCard(&model.Post{UserId: "author", Message: "same"})
+	updated, _ := p.MessageWillBeUpdated(nil, newPost, &model.Post{UserId: "author", Message: "same"})
+	assert.Same(t, newPost, updated)
 }
 
 func TestApplyCardsKeepsOtherAttachments(t *testing.T) {
@@ -133,6 +210,30 @@ func signedTaskChanged(t *testing.T, payload map[string]any, keyToUse string) *h
 func itoa(value int64) string {
 	raw, _ := json.Marshal(value)
 	return string(raw)
+}
+
+func TestTaskChangedRefusesAQueryAndACopy(t *testing.T) {
+	p, _ := newPlugin(t, "https://odoo.test")
+	payload := map[string]any{"v": 1, "task_id": 1, "posts": []any{}}
+
+	request := signedTaskChanged(t, payload, webhookKey)
+	request.URL.RawQuery = "debug=1"
+	recorder := httptest.NewRecorder()
+	p.handleTaskChanged(recorder, request)
+	assert.Equal(t, http.StatusBadRequest, recorder.Code)
+
+	request = signedTaskChanged(t, payload, webhookKey)
+	copied := request.Clone(request.Context())
+	body, _ := io.ReadAll(request.Body)
+	request.Body = io.NopCloser(bytes.NewReader(body))
+	copied.Body = io.NopCloser(bytes.NewReader(body))
+	first := httptest.NewRecorder()
+	p.handleTaskChanged(first, request)
+	assert.Equal(t, http.StatusOK, first.Code, first.Body.String())
+	second := httptest.NewRecorder()
+	p.handleTaskChanged(second, copied)
+	assert.Equal(t, http.StatusUnauthorized, second.Code)
+	assert.Contains(t, second.Body.String(), "replayed")
 }
 
 func TestTaskChangedRefusesAWrongKey(t *testing.T) {

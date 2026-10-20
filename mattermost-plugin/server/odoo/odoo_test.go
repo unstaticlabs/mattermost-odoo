@@ -101,6 +101,8 @@ func TestClientSignsAndReadsAnswers(t *testing.T) {
 	assert.True(t, result.Visible)
 	assert.Equal(t, "Fix it", result.Task.Name)
 	assert.Nil(t, result.Task.DateDeadline)
+	assert.Regexp(t, "^[0-9a-f]{24}$", seen["rid"])
+	delete(seen, "rid")
 	assert.Equal(t, map[string]any{"v": float64(1), "user": "subject-1", "channel_id": "channel-1", "task": map[string]any{"id": float64(5)}}, seen)
 
 	wrong := &Client{BaseURL: server.URL, Key: strings.Repeat("x", 40)}

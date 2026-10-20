@@ -21,6 +21,7 @@ type Plugin struct {
 	client *pluginapi.Client
 	router *mux.Router
 	botID  string
+	seen   signatureCache
 
 	// configurationLock synchronizes access to the configuration.
 	configurationLock sync.RWMutex

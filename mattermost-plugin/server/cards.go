@@ -145,6 +145,36 @@ func applyCards(post *model.Post, cards []*model.MessageAttachment, taskIDs []in
 	return updated
 }
 
+// withCardsOf returns a copy of post with the cards of source: the Odoo card
+// attachments and propTaskIDs. With a nil source, the copy has no cards.
+// A client can send these values, so the hooks always replace them with the
+// values that this plugin wrote.
+func withCardsOf(post, source *model.Post) *model.Post {
+	var cards []*model.MessageAttachment
+	var taskIDs []int
+	if source != nil {
+		for _, attachment := range source.Attachments() {
+			if attachment.Footer == cardFooter {
+				cards = append(cards, attachment)
+			}
+		}
+		taskIDs = taskIDsOf(source)
+	}
+	if source == nil && post.GetProp(propTaskIDs) == nil && !hasCard(post) {
+		return post
+	}
+	return applyCards(post, cards, taskIDs)
+}
+
+func hasCard(post *model.Post) bool {
+	for _, attachment := range post.Attachments() {
+		if attachment.Footer == cardFooter {
+			return true
+		}
+	}
+	return false
+}
+
 // taskIDsOf reads propTaskIDs. After a database round trip the numbers are
 // float64 values in a []any.
 func taskIDsOf(post *model.Post) []int {
@@ -165,7 +195,8 @@ func taskIDsOf(post *model.Post) []int {
 	return ids
 }
 
-// handlesPost is false for posts that never get cards.
+// handlesPost is false for posts that never get cards. A post with
+// attachments, cards included, has the type slack_attachment.
 func handlesPost(post *model.Post) bool {
-	return post.Type == "" && post.GetProp(model.PostPropsFromWebhook) == nil && post.GetProp(model.PostPropsFromBot) == nil
+	return (post.Type == "" || post.Type == model.PostTypeMessageAttachment) && post.GetProp(model.PostPropsFromWebhook) == nil && post.GetProp(model.PostPropsFromBot) == nil
 }

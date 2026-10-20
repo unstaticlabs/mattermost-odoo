@@ -33,7 +33,7 @@ func (p *Plugin) ServeHTTP(c *plugin.Context, w http.ResponseWriter, r *http.Req
 }
 
 // MattermostAuthorizationRequired can trust Mattermost-User-ID because the server sets it only after authenticating the request.
-const maxRequestBodyBytes = 1 << 20 // 1 MiB
+const maxRequestBodyBytes = 64 << 10 // 64 KiB, as docs/api.md says
 
 type loggerContextKey struct{}
 
