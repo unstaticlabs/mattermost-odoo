@@ -6,6 +6,7 @@ import (
 	"io"
 	"net/http"
 	"net/http/httptest"
+	"os"
 	"strings"
 	"testing"
 	"time"
@@ -283,4 +284,13 @@ func TestEnvironmentWinsOverSettings(t *testing.T) {
 	assert.True(t, config.ready())
 	assert.Equal(t, "odoo.env.test", config.odooHost())
 	assert.Equal(t, []string{strings.Repeat("f", 40)}, config.webhookKeys())
+}
+
+// The build puts plugin.json into a JavaScript template string for the
+// webapp. A backslash there changes the JSON, and the webapp then fails to
+// load.
+func TestManifestHasNoBackslash(t *testing.T) {
+	raw, err := os.ReadFile("../plugin.json")
+	require.NoError(t, err)
+	assert.NotContains(t, string(raw), `\`)
 }

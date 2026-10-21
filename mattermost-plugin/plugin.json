@@ -47,7 +47,7 @@
                 "display_name": "Odoo webhook key",
                 "type": "text",
                 "secret": true,
-                "help_text": "Checks Odoo's \"task changed\" requests. The same value is in Odoo's key file usl_mattermost_webhook_key. At least 32 characters."
+                "help_text": "Checks the task-changed requests from Odoo. The same value is in Odoo's key file usl_mattermost_webhook_key. At least 32 characters."
             },
             {
                 "key": "PreviousWebhookKey",
