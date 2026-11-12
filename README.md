@@ -16,11 +16,14 @@ user id joins a Mattermost user to an Odoo user.
 ## Status
 
 - `docs/api.md`: version 1, with every request and response body.
-- `odoo/usl_mattermost/`: written and tested (27 tests). It is not in the Odoo
-  image yet.
-- `mattermost-plugin/`: written and tested (12 Go tests, and an end-to-end
-  test in a local Mattermost 12 with a fake Odoo that uses the module's own
-  signing code). Not installed on `chat.unstaticlabs.com` yet.
+- `odoo/usl_mattermost/`: source consumed through the Odoo distribution's pinned
+  repository binding. Qualify it with the distribution's native module tests.
+- A runtime audit on 12 November 2026 observed Mattermost plugin version 0.2.1.
+  Its exact deployed Git revision has not been established; a version number
+  alone does not identify the deployed source.
+- `.github/workflows/plugin-ci.yml` qualifies plugin source and the Linux bundle
+  on pull requests, pushes to `main` and manual runs. It retains the archive under
+  the workflow checkout SHA. Deployment remains a separate operation.
 
 Known limit: a live refresh changes the post's attachments, so Mattermost shows
 the poster's message as "(edited)". The first card, added while the message is
@@ -68,6 +71,36 @@ The test image must exist: `docker compose -p usl-odoo-saas-19-3 --profile test 
   example `v0.1.0`. Use build metadata (`+usl.N`) for a rebuild of the same
   version, never a pre-release (`-usl.N`): Mattermost treats a pre-release as
   older.
+
+### Qualify a plugin change
+
+Use the Go version declared in `mattermost-plugin/go.mod` and the Node version in
+`mattermost-plugin/.nvmrc`. From `mattermost-plugin/`:
+
+```sh
+make manifest-check apply
+go vet -mod=readonly ./server/... ./build/...
+go test -mod=readonly -race ./server/... ./build/...
+npm ci --prefix webapp
+npm run lint --prefix webapp
+npm run check-types --prefix webapp
+npm run test-ci --prefix webapp -- --ci
+make usl-dist
+python3 scripts/verify-usl-bundle.py dist/*.tar.gz
+```
+
+The native preparation generates the ignored Go and frontend manifests required
+by the tests. Go checks name only the plugin and build-tool packages, so Go
+samples inside frontend dependencies are not treated as product packages.
+`npm ci` uses the committed lockfile; the bundle then follows the existing
+`usl-dist` target. Verification checks the manifest, actual Linux amd64/arm64 ELF
+headers, nonempty web entry and archive size below 90 MiB, and reports its SHA-256.
+
+CI uses read-only repository permissions, immutable official action revisions and
+the declared runtime files. It receives no service credentials and performs no
+installation on Mattermost or Odoo. Its retained bundle proves source/build
+qualification; runtime source attribution and service behavior are checked at
+deployment.
 
 ## The Odoo module
 
