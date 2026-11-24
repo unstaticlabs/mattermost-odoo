@@ -32,7 +32,7 @@ jobs:
           go-version-file: mattermost-plugin/go.mod
           cache-dependency-path: mattermost-plugin/go.sum
       - name: Set up declared Node version
-        uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1
+        uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
         with:
           node-version-file: mattermost-plugin/.nvmrc
           cache: npm
