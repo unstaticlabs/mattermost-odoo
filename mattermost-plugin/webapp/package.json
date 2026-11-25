@@ -23,7 +23,7 @@
     "@emotion/react": "11.14.0",
     "@mattermost/client": "11.1.0",
     "@mattermost/eslint-plugin": "1.1.0-0",
-    "@mattermost/types": "11.1.0",
+    "@mattermost/types": "11.9.0",
     "@testing-library/jest-dom": "5.17.0",
     "@types/babel__core": "7.20.5",
     "@types/babel__template": "7.4.4",
