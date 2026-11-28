@@ -6,6 +6,7 @@ import (
 	"crypto/rand"
 	"encoding/hex"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"net/http"
@@ -15,6 +16,8 @@ import (
 
 // APIVersion is the version of docs/api.md that this plugin speaks.
 const APIVersion = 1
+
+const defaultHTTPTimeout = 10 * time.Second
 
 // Client calls the Odoo module usl_mattermost.
 type Client struct {
@@ -26,7 +29,7 @@ type Client struct {
 
 // ProtocolError is a 4xx or 5xx answer from Odoo (docs/api.md, Errors).
 type ProtocolError struct {
-	Status  int
+	Status  int    `json:"-"`
 	Code    string `json:"error"`
 	Message string `json:"message"`
 }
@@ -122,9 +125,42 @@ type LinksResult struct {
 // ReadTask calls task/read as the Pocket ID user `subject`.
 func (c *Client) ReadTask(ctx context.Context, subject, channelID string, task TaskRef) (*ReadResult, error) {
 	var result ReadResult
-	err := c.post(ctx, "/usl/mattermost/task/read", map[string]any{
+	timeout := defaultHTTPTimeout
+	if c.HTTP != nil {
+		timeout = c.HTTP.Timeout
+	}
+	if timeout > 0 {
+		var cancel context.CancelFunc
+		ctx, cancel = context.WithTimeout(ctx, timeout)
+		defer cancel()
+	}
+	fields := map[string]any{
 		"user": subject, "channel_id": channelID, "task": task,
-	}, &result)
+	}
+	const path = "/usl/mattermost/task/read"
+	err := c.post(ctx, path, fields, &result)
+	// A brief deployment interruption can return a proxy 503. Only this
+	// idempotent read retries. Use a new signed request on every attempt.
+	for _, delay := range [...]time.Duration{200 * time.Millisecond, 1800 * time.Millisecond} {
+		var protocol *ProtocolError
+		if !errors.As(err, &protocol) || protocol.Status != http.StatusServiceUnavailable || protocol.Code != "" {
+			break
+		}
+		if ctx.Err() != nil {
+			return &result, ctx.Err()
+		}
+		if deadline, ok := ctx.Deadline(); ok && time.Until(deadline) <= delay {
+			break
+		}
+		timer := time.NewTimer(delay)
+		select {
+		case <-ctx.Done():
+			timer.Stop()
+			return &result, ctx.Err()
+		case <-timer.C:
+		}
+		err = c.post(ctx, path, fields, &result)
+	}
 	return &result, err
 }
 
@@ -187,7 +223,7 @@ func (c *Client) do(ctx context.Context, method, path string, body []byte, resul
 
 	httpClient := c.HTTP
 	if httpClient == nil {
-		httpClient = &http.Client{Timeout: 10 * time.Second}
+		httpClient = &http.Client{Timeout: defaultHTTPTimeout}
 	}
 	response, err := httpClient.Do(request)
 	if err != nil {
